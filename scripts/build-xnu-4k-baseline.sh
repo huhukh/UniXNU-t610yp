@@ -58,11 +58,11 @@ for PATCH in "$ROOT"/patches/xnu/*.patch "$ROOT"/patches/ums512/*.patch "$ROOT"/
     esac
   fi
   echo "SEDANG MEMERIKSA PATCH: $(basename "$PATCH")"
-  if [ "$(basename "$PATCH")" = "ios-sweet-0005-non-pac-build-fixes.patch" ]; then
-  echo "===== ISI PMAP.H SEBELUM PATCH ====="
-  sed -n '390,425p' .cache/xnu-work/osfmk/arm/pmap/pmap.h
-  echo "===== SEMUA reserved10 ====="
-  grep -n -C 3 "reserved10" .cache/xnu-work/osfmk/arm/pmap/pmap.h
+if [ "$(basename "$PATCH")" = "ios-sweet-0005-non-pac-build-fixes.patch" ]; then
+  echo "===== PMAP.H BARIS 420-470 ====="
+  sed -n '420,470p' .cache/xnu-work/osfmk/arm/pmap/pmap.h
+  echo "===== HAS_APPLE_PAC DAN reserved11 ====="
+  grep -n -C 5 -E "HAS_APPLE_PAC|reserved11|reserved10" .cache/xnu-work/osfmk/arm/pmap/pmap.h
 fi
   if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
     git -C .cache/xnu-work apply --check "$PATCH"
