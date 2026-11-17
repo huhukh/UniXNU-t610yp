@@ -1,3 +1,4 @@
+
 name: XNU 8796 kernel
 
 on:
@@ -19,6 +20,7 @@ on:
         description: Continue after compile errors
         required: true
         default: "false"
+
   push:
     branches: [main]
     paths:
@@ -42,9 +44,11 @@ defaults:
 
 jobs:
   build:
-    # XNU 8796 uses the Xcode 15-era iig ABI. Do not move this job to macos-26.
-    runs-on: macos-14
+    # macOS 14 runner sudah retired.
+    # Menggunakan macOS 15 dengan Xcode 16.4.
+    runs-on: macos-15
     timeout-minutes: 240
+
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
@@ -74,26 +78,39 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Select Xcode 15
+      - name: Select Xcode 16.4
         run: |
           set -euo pipefail
-          xcode_app=$(find /Applications -maxdepth 1 -type d -name 'Xcode_15*.app' | sort -V | head -n 1)
-          if [ -z "$xcode_app" ]; then
-            xcode_app=$(find /Applications -maxdepth 1 -type d -name 'Xcode_14*.app' | sort -V | head -n 1)
+
+          xcode_app="/Applications/Xcode_16.4.app"
+
+          if [ ! -d "$xcode_app" ]; then
+            echo "Xcode 16.4 not found on macOS 15 runner."
+            find /Applications -maxdepth 1 -type d -name 'Xcode*.app'
+            exit 1
           fi
-          test -n "$xcode_app" || { echo "Xcode 14/15 not installed" >&2; exit 1; }
+
           echo "DEVELOPER_DIR=$xcode_app/Contents/Developer" >> "$GITHUB_ENV"
+
           sudo xcode-select -s "$xcode_app"
+
           xcodebuild -version
           xcrun --find iig
           xcrun --sdk iphoneos --show-sdk-version
 
       - name: Install build dependencies
         run: |
+          set -euo pipefail
+
           brew install cmake ninja unifdef jq
+
           python3 --version
+
           for tool in git make clang cmake ninja unifdef xcodebuild; do
-            command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 1; }
+            command -v "$tool" >/dev/null || {
+              echo "Missing build tool: $tool"
+              exit 1
+            }
           done
 
       - name: Select T610YP configuration
@@ -101,8 +118,12 @@ jobs:
         env:
           UNIXNU_DEVICE: ${{ env.DEVICE_DIR }}
         run: |
+          set -euo pipefail
+
           chmod +x unixnu
+
           ./unixnu defconfig -D "$UNIXNU_DEVICE" "$DEFCONFIG"
+
           ./unixnu status -D "$UNIXNU_DEVICE"
 
       - name: Build XNU 8796 (compile only)
@@ -114,34 +135,62 @@ jobs:
           XNU_BUILD_WERROR: "0"
         run: |
           set -euo pipefail
-          # The normal "build kernel" command also performs IPSW prelinking.
-          # T610YP has no qualified iOS kernelcache yet, so invoke the same
-          # kernel build path with only the prelink phase suppressed.
+
+          # Skip IPSW prelink because T610YP has no
+          # qualified iOS kernelcache yet.
+
           python3 - <<'PY'
           from scripts.unixnu import cli, kernel
+
           kernel.prelink = lambda ctx: None
-          cli.main(['build', '-D', '${{ env.DEVICE_DIR }}', 'kernel'])
+
+          cli.main([
+              'build',
+              '-D',
+              '${{ env.DEVICE_DIR }}',
+              'kernel'
+          ])
           PY
 
       - name: Verify debug console and platform archives
         working-directory: unixnu-base
+        env:
+          DEVICE_DIR: ${{ env.DEVICE_DIR }}
         run: |
           set -euo pipefail
+
           tree="out/t610yp/tree"
+
           test -f "$tree/build/arm-platforms/libArmCpu.a"
           test -f "$tree/build/arm-platforms/libArmDTPlatform.a"
           test -f "$tree/build/arm-platforms/libArmVirtPlatform.a"
+
           kernel_image=$(find "$tree/build/xnu/ios-obj" -type f \
-            \( -name 'mach.development.*.unstripped' -o -name 'kernel.development.*' \) \
+            \( -name 'mach.development.*.unstripped' \
+            -o -name 'kernel.development.*' \) \
             -print -quit)
+
           test -n "$kernel_image"
-          grep -R -q '0x70100000' "$tree/.cache/xnu-work/pexpert" "$tree/.cache/xnu-work/bsd" 2>/dev/null
-          grep -q 'framebuffer-base' "$DEVICE_DIR/scripts/make-t610yp-adt.py"
-          test -s "$tree/logs/kernel.log" || test -s "$tree/logs/kernel-bootstrap.log"
+
+          grep -R -q '0x70100000' \
+            "$tree/.cache/xnu-work/pexpert" \
+            "$tree/.cache/xnu-work/bsd" 2>/dev/null
+
+          grep -q 'framebuffer-base' \
+            "$DEVICE_DIR/scripts/make-t610yp-adt.py"
+
+          test -s "$tree/logs/kernel.log" \
+            || test -s "$tree/logs/kernel-bootstrap.log"
+
+          echo "Kernel and platform archive checks passed."
 
       - name: Validate generated ADT
         working-directory: unixnu-base
+        env:
+          DEVICE_DIR: ${{ env.DEVICE_DIR }}
         run: |
+          set -euo pipefail
+
           python3 "$DEVICE_DIR/scripts/make-t610yp-adt.py" \
             --output "$RUNNER_TEMP/t610yp.adt" \
             --dram-size 0x40000000 \
@@ -149,12 +198,18 @@ jobs:
             --cpu-regs 0,0x100,0x200,0x300,0x400,0x500,0x600,0x700 \
             --unique-chip-id 0x554d533531325450
 
+          test -s "$RUNNER_TEMP/t610yp.adt"
+
       - name: Print kernel failure log
         if: failure()
         working-directory: unixnu-base
         run: |
           set +e
-          for log in out/t610yp/logs/kernel-bootstrap.log out/t610yp/logs/kernel.log; do
+
+          for log in \
+            out/t610yp/logs/kernel-bootstrap.log \
+            out/t610yp/logs/kernel.log; do
+
             if [ -s "$log" ]; then
               echo "===== $log (last 240 lines) ====="
               tail -n 240 "$log"
@@ -166,23 +221,52 @@ jobs:
         working-directory: unixnu-base
         run: |
           set +e
+
           mkdir -p "$RUNNER_TEMP/t610yp-kernel"
+
           find "out/t610yp/tree/build/xnu" -type f \( \
-            -name 'mach.development.*' -o -name 'kernel.development.*' -o -name '*.unstripped.noctf' \) \
-            -exec cp -p {} "$RUNNER_TEMP/t610yp-kernel/" \; 2>/dev/null
-          cp -p "$RUNNER_TEMP/t610yp.adt" "$RUNNER_TEMP/t610yp-kernel/" 2>/dev/null
-          cp -R "out/t610yp/logs" "$RUNNER_TEMP/t610yp-kernel/" 2>/dev/null
-          cp -R "out/t610yp/tree/build/xnu" "$RUNNER_TEMP/t610yp-kernel/xnu-build" 2>/dev/null
+            -name 'mach.development.*' \
+            -o -name 'kernel.development.*' \
+            -o -name '*.unstripped.noctf' \
+          \) \
+            -exec cp -p {} "$RUNNER_TEMP/t610yp-kernel/" \; \
+            2>/dev/null
+
+          cp -p "$RUNNER_TEMP/t610yp.adt" \
+            "$RUNNER_TEMP/t610yp-kernel/" 2>/dev/null
+
+          cp -R "out/t610yp/logs" \
+            "$RUNNER_TEMP/t610yp-kernel/" 2>/dev/null
+
+          cp -R "out/t610yp/tree/build/xnu" \
+            "$RUNNER_TEMP/t610yp-kernel/xnu-build" 2>/dev/null
+
           SDK=$(xcrun --sdk macosx --show-sdk-path)
+
           mkdir -p "$RUNNER_TEMP/sdk-kernel-platform"
-          cp -R "$SDK/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform" \
+
+          cp -R \
+            "$SDK/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform" \
             "$RUNNER_TEMP/sdk-kernel-platform/" 2>/dev/null || true
+
           tar czf "$RUNNER_TEMP/t610yp-buildtree.tgz" \
-            --exclude='*.o' --exclude='*.cpo' --exclude='*.a' --exclude='*.dSYM' \
-            --exclude='*.unstripped' --exclude='.git' \
-            -C . build/xnu .cache/fakeroot/usr/local/include refer/xnu patches scripts \
-            -C "$RUNNER_TEMP" sdk-kernel-platform 2>/dev/null || true
-          find "$RUNNER_TEMP/t610yp-kernel" -maxdepth 2 -type f -print || true
+            --exclude='*.o' \
+            --exclude='*.cpo' \
+            --exclude='*.a' \
+            --exclude='*.dSYM' \
+            --exclude='*.unstripped' \
+            --exclude='.git' \
+            -C . \
+            build/xnu \
+            .cache/fakeroot/usr/local/include \
+            refer/xnu \
+            patches \
+            scripts \
+            -C "$RUNNER_TEMP" \
+            sdk-kernel-platform 2>/dev/null || true
+
+          find "$RUNNER_TEMP/t610yp-kernel" \
+            -maxdepth 2 -type f -print || true
 
       - name: Upload XNU 8796 kernel artifacts
         if: always()
@@ -194,4 +278,3 @@ jobs:
             ${{ runner.temp }}/t610yp-buildtree.tgz
           if-no-files-found: warn
           retention-days: 14
-
