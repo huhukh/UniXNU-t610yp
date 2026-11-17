@@ -64,7 +64,10 @@ if [ "$(basename "$PATCH")" = "ios-sweet-0005-non-pac-build-fixes.patch" ]; then
   echo "===== SEMUA reserved10 ====="
   grep -n -C 5 -E "HAS_APPLE_PAC|reserved11|reserved10" .cache/xnu-work/osfmk/arm/pmap/pmap.h
 fi
-
+if [ "$XNU_VERSION" = "8796.141.3" ] && [ "$(basename "$PATCH")" = "ios-sweet-0005-non-pac-build-fixes.patch" ]; then
+  echo "skip incompatible XNU 8796 patch: $(basename "$PATCH")"
+  continue
+fi
 if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
   git -C .cache/xnu-work apply --check "$PATCH"
   git -C .cache/xnu-work apply "$PATCH"
