@@ -59,15 +59,16 @@ for PATCH in "$ROOT"/patches/xnu/*.patch "$ROOT"/patches/ums512/*.patch "$ROOT"/
   fi
   echo "SEDANG MEMERIKSA PATCH: $(basename "$PATCH")"
 if [ "$(basename "$PATCH")" = "ios-sweet-0005-non-pac-build-fixes.patch" ]; then
-  echo "===== PMAP.H BARIS 420-470 ====="
-  sed -n '420,470p' .cache/xnu-work/osfmk/arm/pmap/pmap.h
-  echo "===== HAS_APPLE_PAC DAN reserved11 ====="
+  echo "===== PMAP.H BARIS 395-415 ====="
+  nl -ba .cache/xnu-work/osfmk/arm/pmap/pmap.h | sed -n '395,415p'
+  echo "===== SEMUA reserved10 ====="
   grep -n -C 5 -E "HAS_APPLE_PAC|reserved11|reserved10" .cache/xnu-work/osfmk/arm/pmap/pmap.h
 fi
-  if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
-    git -C .cache/xnu-work apply --check "$PATCH"
-    git -C .cache/xnu-work apply "$PATCH"
-  fi
+
+if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
+  git -C .cache/xnu-work apply --check "$PATCH"
+  git -C .cache/xnu-work apply "$PATCH"
+fi
 done
 export XNU_AVAILABILITY_PL=$ROOT/.cache/fakeroot/usr/local/libexec/availability.pl
 python3 scripts/prepare-xnu-source.py
