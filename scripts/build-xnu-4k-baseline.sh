@@ -799,6 +799,10 @@ if not stamp.exists() or stamp.read_text() != identity:
     stamp.write_text(identity)
 PY
 EXTRA_CFLAGS="$EXTRA_CFLAGS -DXNU_BOOT_PROGRESS=$BOOT_PROGRESS"
+
+mkdir -p "$ROOT/build/xnu"
+
+set +e
 make -C .cache/xnu-work "${XNU_BUILD_TARGET:-build}" SDKROOT="${XNU_SDKROOT:-iphoneos}" ARCH_CONFIGS=ARM64 \
   MACHINE_CONFIGS="$XNU_MACHINE_CONFIG" KERNEL_CONFIGS=DEVELOPMENT \
   ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 LARGE_MEMORY_DEFINE=-UARM_LARGE_MEMORY \
@@ -808,7 +812,20 @@ make -C .cache/xnu-work "${XNU_BUILD_TARGET:-build}" SDKROOT="${XNU_SDKROOT:-iph
   RC_DARWIN_KERNEL_VERSION="$XNU_DARWIN" RC_ProjectSourceVersion="$XNU_VERSION" \
   BUILD_LTO=0 BOUND_CHECKS=0 BUILD_WERROR="${XNU_BUILD_WERROR:-0}" MAKEJOBS=-j"${JOBS:-4}" \
   CFLAGS_EXTRA="$EXTRA_CFLAGS" "${EXTRA_MAKE_ARGS[@]}" \
-  OBJROOT="$ROOT/build/xnu/ios-obj" SYMROOT="$ROOT/build/xnu/ios-sym" DSTROOT="$ROOT/build/xnu/ios-dst"
+  OBJROOT="$ROOT/build/xnu/ios-obj" SYMROOT="$ROOT/build/xnu/ios-sym" DSTROOT="$ROOT/build/xnu/ios-dst" \
+  2>&1 | tee "$ROOT/build/xnu/xnu-build.log"
+
+BUILD_STATUS=${PIPESTATUS[0]}
+set -e
+
+if [ "$BUILD_STATUS" -ne 0 ]; then
+  echo "========== PENYEBAB BUILD GAGAL =========="
+  grep -n -i -E 'error:|fatal error:|undefined symbol|Undefined symbols|ld: error|No rule to make target|BUILD FAILED' \
+    "$ROOT/build/xnu/xnu-build.log" | head -60 || true
+  echo "========== AKHIR LOG BUILD =========="
+  tail -40 "$ROOT/build/xnu/xnu-build.log"
+  exit "$BUILD_STATUS"
+fi
 if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ] && [ "$CRYPTO_BOOTSTRAP_MODE" = source ]; then
   python3 scripts/seal-source-crypto-kernel.py \
     build/xnu/ios-obj/$XNU_OBJ_VARIANT/$XNU_KERNEL_BASENAME.unstripped.noctf
